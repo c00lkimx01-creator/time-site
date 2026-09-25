@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高機能モダンデジタルクロック</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- 多数のモダンフォントと日本語フォント(Noto Sans JP)をインポート -->
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:ital,wght@0,200..800;1,200..800&family=Montserrat:wght@200..900&family=Noto+Sans+JP:wght@100..900&family=Orbitron:wght@400..900&family=Outfit:wght@200..900&family=Playfair+Display:wght@400..900&family=Space+Grotesk:wght@300..700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            /* Color Variables */
+            --color-bg: #000000;
+            --color-text: #ffffff;
+            --color-colon: rgba(255, 255, 255, 0.35);
+            
+            /* Design Variables */
+            --clock-font: 'Outfit', 'Noto Sans JP', sans-serif;
+            --clock-weight: 300;
+            --clock-scale: 1;
+            --clock-glow: 0px;
+            --peek-opacity: 0.35;
+            --peek-offset: 85%;
+            
+            /* Animation Variables */
+            --anim-duration: 450ms;
+            --anim-easing: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        body {
+            background-color: var(--color-bg);
+            color: var(--color-text);
+            font-family: var(--clock-font);
+            user-select: none;
+            overflow: hidden;
+            transition: background-color 0.4s ease, color 0.4s ease;
+            position: relative;
+        }
+
+        /* Background Effects Layers */
+        .bg-layer {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: -1;
+            transition: opacity 0.5s ease;
+        }
+
+        /* Gradient Overlay */
+        .bg-gradient {
+            background: radial-gradient(circle at center, transparent 0%, rgba(0,0,0,0.6) 100%);
+            opacity: 0;
+        }
+
+        .bg-noise {
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.08'/%3E%3C/svg%3E");
+            opacity: 0;
+        }
+
+        body[data-bg-style="gradient"] .bg-gradient { opacity: 1; }
+        body[data-bg-style="noise"] .bg-noise { opacity: 1; }
+        body[data-bg-style="noise-gradient"] .bg-noise, 
+        body[data-bg-style="noise-gradient"] .bg-gradient { opacity: 1; }
+
+        .tabular-digits {
+            font-variant-numeric: tabular-nums;
+            font-feature-settings: "tnum";
+        }
+
+        /* Digit Drum Column & Peek Effect */
+        .digit-col {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            height: 1.35em;
+            width: 0.62em;
+            overflow: hidden;
+            line-height: 1;
+            font-family: var(--clock-font);
+            font-weight: var(--clock-weight);
+            filter: drop-shadow(0 0 var(--clock-glow) var(--color-text));
+            
+            /* Gradient Mask to fade top and bottom */
+            -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 80%, transparent 100%);
+            mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 80%, transparent 100%);
+        }
+
+        .digit-col span {
+            position: absolute;
+            top: 0.12em;
+            left: 0;
+            width: 100%;
+            height: 1em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            will-change: transform, opacity;
+            transition: transform var(--anim-duration) var(--anim-easing), 
+                        opacity var(--anim-duration) var(--anim-easing);
+        }
+
+        /* Current center digit */
+        .digit-col .curr-val {
+            transform: translateY(0%);
+            opacity: 1;
+        }
+
+        /* Peeking next digit below */
+        .digit-col .next-val {
+            transform: translateY(var(--peek-offset));
+            opacity: var(--peek-opacity);
+        }
+
+        .digit-col.rolling .curr-val {
+            transform: translateY(calc(var(--peek-offset) * -1));
+            opacity: 0;
+        }
+
+        .digit-col.rolling .next-val {
+            transform: translateY(0%);
+            opacity: 1;
+        }
+
+        /* Used to reset position instantly behind the scenes */
+        .digit-col.no-transition span {
+            transition: none !important;
+        }
+
+        .colon-style {
+            color: var(--color-colon);
+            font-weight: var(--clock-weight);
+            filter: drop-shadow(0 0 var(--clock-glow) var(--color-colon));
+        }
+
+        @keyframes softPulse {
+            0%, 100% { opacity: 0.9; }
+            50% { opacity: 0.2; }
+        }
+
+        .colon-pulse {
+            animation: softPulse 1s ease-in-out infinite;
+        }
+
+        /* Date text styling */
+        .date-display {
+            font-family: 'Noto Sans JP', sans-serif;
+            letter-spacing: 0.05em;
+            opacity: 0.8;
+            filter: drop-shadow(0 0 calc(var(--clock-glow)/2) var(--color-text));
+            transition: opacity 0.3s ease;
+        }
+
+        .idle-hide {
+            transition: opacity 0.5s ease;
+        }
+
+        body.user-idle .idle-hide {
+            opacity: 0 !important;
+            pointer-events: none;
+        }
+
+        body.user-idle {
+            cursor: none;
+        }
+
+        /* Glassmorphism Panel styling */
+        .glass-panel {
+            background: rgba(18, 18, 22, 0.85);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .custom-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        /* Tabs styling */
+        .tab-btn.active {
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+            border-bottom: 2px solid #fff;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="min-h-screen w-screen flex flex-col items-center justify-center select-none" data-bg-style="solid">
+
+    <div class="bg-layer bg-gradient"></div>
+    <div class="bg-layer bg-noise"></div>
+
+    <main id="clock-container" class="relative flex flex-col items-center justify-center w-full px-4 transition-transform duration-300" style="transform: scale(var(--clock-scale));">
+        
+        <!-- Date Display -->
+        <div id="date-display" class="date-display text-[3vw] sm:text-[2vw] md:text-[1.5vw] font-light mb-4">
+            2026年10月25日 (日)
+        </div>
+
+        <div class="tabular-digits text-[18vw] sm:text-[16vw] md:text-[14vw] lg:text-[12vw] leading-none tracking-tight flex items-center justify-center">
+            
+            <!-- Hours -->
+            <div class="digit-col" id="h1"><span class="curr-val">0</span><span class="next-val">1</span></div>
+            <div class="digit-col" id="h2"><span class="curr-val">0</span><span class="next-val">1</span></div>
+
+            <!-- Colon 1 -->
+            <span id="colon-1" class="colon-style px-[0.05em] -translate-y-[0.08em] font-extralight">:</span>
+
+            <!-- Minutes -->
+            <div class="digit-col" id="m1"><span class="curr-val">0</span><span class="next-val">1</span></div>
+            <div class="digit-col" id="m2"><span class="curr-val">0</span><span class="next-val">1</span></div>
+
+            <div id="seconds-group" class="inline-flex items-center">
+                <!-- Colon 2 -->
+                <span id="colon-2" class="colon-style px-[0.05em] -translate-y-[0.08em] font-extralight">:</span>
+
+                <!-- Seconds -->
+                <div class="digit-col" id="s1"><span class="curr-val">0</span><span class="next-val">1</span></div>
+                <div class="digit-col" id="s2"><span class="curr-val">0</span><span class="next-val">1</span></div>
+            </div>
+
+            <!-- AM/PM Badge for 12H Mode -->
+            <span id="ampm-badge" class="hidden text-[0.25em] font-light ml-4 self-center tracking-widest uppercase opacity-70">AM</span>
+        </div>
+    </main>
+
+    <header class="idle-hide fixed top-6 right-6 flex items-center gap-3 z-30">
+        <!-- Fullscreen Button -->
+        <button onclick="toggleFullscreen()" title="フルスクリーン切り替え" class="p-3 rounded-full bg-white/5 backdrop-blur border border-white/10 text-white/70 hover:text-white hover:bg-white/15 transition-all active:scale-95 shadow-lg">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-2V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+            </svg>
+        </button>
+
+        <!-- Settings Gear Button -->
+        <button onclick="openSettings()" title="設定" class="p-3 rounded-full bg-white/5 backdrop-blur border border-white/10 text-white/70 hover:text-white hover:bg-white/15 transition-all active:scale-95 shadow-lg">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+        </button>
+    </header>
+
+    <div id="settings-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex justify-end opacity-0 pointer-events-none transition-opacity duration-300">
+        <div class="glass-panel w-full max-w-sm h-full flex flex-col text-white transform translate-x-full transition-transform duration-300 shadow-2xl">
+            
+            <!-- Modal Header -->
+            <div class="p-5 flex items-center justify-between border-b border-white/10">
+                <h2 class="text-lg font-medium tracking-wide font-['Noto_Sans_JP'] flex items-center gap-2">
+                    <svg class="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+                    時計のカスタマイズ
+                </h2>
+                <button onclick="closeSettings()" class="p-2 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+
+            <div class="flex px-2 pt-2 border-b border-white/10 text-xs font-['Noto_Sans_JP'] overflow-x-auto custom-scroll">
+                <button class="tab-btn active px-4 py-2 text-white/60 hover:text-white whitespace-nowrap transition-colors rounded-t-md" onclick="switchTab('tab-basic', this)">基本設定</button>
+                <button class="tab-btn px-4 py-2 text-white/60 hover:text-white whitespace-nowrap transition-colors rounded-t-md" onclick="switchTab('tab-design', this)">デザイン</button>
+                <button class="tab-btn px-4 py-2 text-white/60 hover:text-white whitespace-nowrap transition-colors rounded-t-md" onclick="switchTab('tab-color', this)">カラー</button>
+                <button class="tab-btn px-4 py-2 text-white/60 hover:text-white whitespace-nowrap transition-colors rounded-t-md" onclick="switchTab('tab-anim', this)">アニメーション</button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto custom-scroll p-6 font-['Noto_Sans_JP']">
+                
+                <!-- Tab 1: 基本設定 (Basic Settings) -->
+                <div id="tab-basic" class="tab-content active space-y-6">
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-white/90">24時間表示</span>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="setting-24h" class="sr-only peer" checked onchange="updateSetting('use24Hour', this.checked)">
+                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                            </label>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-white/90">秒を表示する</span>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="setting-seconds" class="sr-only peer" checked onchange="updateSetting('showSeconds', this.checked)">
+                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                            </label>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-white/90">日付を表示する</span>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="setting-date" class="sr-only peer" checked onchange="updateSetting('showDate', this.checked)">
+                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                            </label>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-white/90">コロンを点滅させる</span>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="setting-blink" class="sr-only peer" checked onchange="updateSetting('blinkColons', this.checked)">
+                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-design" class="tab-content space-y-5">
+                    <div class="flex flex-col gap-2">
+                        <label class="text-xs text-white/60">フォントファミリー</label>
+                        <select id="setting-font" class="w-full bg-white/10 border border-white/15 rounded-lg px-3 py-2 text-sm text-white focus:outline-none" onchange="updateSetting('fontFamily', this.value)">
+                            <option value="'Outfit', 'Noto Sans JP', sans-serif" class="bg-gray-900">Outfit (モダン・クリーン)</option>
+                            <option value="'JetBrains Mono', 'Noto Sans JP', monospace" class="bg-gray-900">JetBrains Mono (テクノロジー)</option>
+                            <option value="'Orbitron', 'Noto Sans JP', sans-serif" class="bg-gray-900">Orbitron (サイバー・SF)</option>
+                            <option value="'Montserrat', 'Noto Sans JP', sans-serif" class="bg-gray-900">Montserrat (ジオメトリック)</option>
+                            <option value="'Space Grotesk', 'Noto Sans JP', sans-serif" class="bg-gray-900">Space Grotesk (ユニーク)</option>
+                            <option value="'Bebas Neue', 'Noto Sans JP', sans-serif" class="bg-gray-900">Bebas Neue (縦長・ボールド)</option>
+                            <option value="'Playfair Display', 'Noto Sans JP', serif" class="bg-gray-900">Playfair Display (エレガント)</option>
+                            <option value="'Noto Sans JP', sans-serif" class="bg-gray-900">Noto Sans JP (標準日本語)</option>
+                        </select>
+                    </div>
+
+                    <div class="flex flex-col gap-2">
+                        <label class="text-xs text-white/60">文字の太さ (Font Weight)</label>
+                        <select id="setting-weight" class="w-full bg-white/10 border border-white/15 rounded-lg px-3 py-2 text-sm text-white focus:outline-none" onchange="updateSetting('fontWeight', this.value)">
+                            <option value="200" class="bg-gray-900">Thin (極細)</option>
+                            <option value="300" class="bg-gray-900">Light (細め)</option>
+                            <option value="400" class="bg-gray-900">Regular (標準)</option>
+                            <option value="600" class="bg-gray-900">Semi-Bold (やや太め)</option>
+                            <option value="800" class="bg-gray-900">Bold (太字)</option>
+                        </select>
+                    </div>
+
+                    <div class="flex flex-col gap-2 pt-2">
+                        <div class="flex justify-between text-xs text-white/60"><span>全体のサイズ</span><span id="val-scale">100%</span></div>
+                        <input type="range" id="setting-scale" min="50" max="150" value="100" class="w-full accent-blue-400" oninput="updateSetting('digitScale', this.value/100); document.getElementById('val-scale').textContent = this.value + '%'">
+                    </div>
+
+                    <div class="flex flex-col gap-2 pt-2">
+                        <div class="flex justify-between text-xs text-white/60"><span>発光エフェクト (Glow)</span><span id="val-glow">0px</span></div>
+                        <input type="range" id="setting-glow" min="0" max="40" value="0" class="w-full accent-blue-400" oninput="updateSetting('glowAmount', this.value); document.getElementById('val-glow').textContent = this.value + 'px'">
+                    </div>
+
+                    <div class="flex flex-col gap-2 pt-2">
+                        <div class="flex justify-between text-xs text-white/60"><span>次の数字の透明度 (Peek Opacity)</span><span id="val-peek-op">35%</span></div>
+                        <input type="range" id="setting-peek-op" min="0" max="80" value="35" class="w-full accent-blue-400" oninput="updateSetting('peekOpacity', this.value/100); document.getElementById('val-peek-op').textContent = this.value + '%'">
+                    </div>
+
+                    <div class="flex flex-col gap-2 pt-2">
+                        <div class="flex justify-between text-xs text-white/60"><span>次の数字の位置 (Peek Offset)</span><span id="val-peek-off">85%</span></div>
+                        <input type="range" id="setting-peek-off" min="50" max="120" value="85" class="w-full accent-blue-400" oninput="updateSetting('peekOffset', this.value); document.getElementById('val-peek-off').textContent = this.value + '%'">
+                    </div>
+                </div>
+
+                <div id="tab-color" class="tab-content space-y-6">
+                    <div>
+                        <label class="block text-xs text-white/60 mb-2">カラープリセット</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="applyPreset('oled')" class="p-2 rounded-md border border-white/10 bg-black text-white text-xs hover:border-white/40 flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-white"></div>OLED Black</button>
+                            <button onclick="applyPreset('studio')" class="p-2 rounded-md border border-white/10 bg-slate-100 text-slate-900 text-xs hover:border-white/40 flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-slate-900"></div>Clean White</button>
+                            <button onclick="applyPreset('cyber')" class="p-2 rounded-md border border-white/10 bg-[#0d0221] text-[#00f0ff] text-xs hover:border-white/40 flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#00f0ff]"></div>Cyber Neon</button>
+                            <button onclick="applyPreset('mint')" class="p-2 rounded-md border border-white/10 bg-[#0f172a] text-[#a7f3d0] text-xs hover:border-white/40 flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#a7f3d0]"></div>Mint Dark</button>
+                            <button onclick="applyPreset('sepia')" class="p-2 rounded-md border border-white/10 bg-[#2c241b] text-[#d4b595] text-xs hover:border-white/40 flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#d4b595]"></div>Retro Sepia</button>
+                            <button onclick="applyPreset('sakura')" class="p-2 rounded-md border border-white/10 bg-[#fff0f5] text-[#db7093] text-xs hover:border-white/40 flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-[#db7093]"></div>Sakura</button>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-white/10 space-y-3">
+                        <label class="block text-xs text-white/60">カスタムカラー</label>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-white/90">テキスト色</span>
+                            <input type="color" id="setting-col-text" class="w-8 h-8 rounded bg-transparent cursor-pointer" onchange="updateSetting('textColor', this.value)">
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-white/90">背景色</span>
+                            <input type="color" id="setting-col-bg" class="w-8 h-8 rounded bg-transparent cursor-pointer" onchange="updateSetting('bgColor', this.value)">
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-white/90">コロン色</span>
+                            <input type="color" id="setting-col-colon" class="w-8 h-8 rounded bg-transparent cursor-pointer" onchange="updateSetting('colonColor', this.value)">
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-white/10">
+                        <label class="block text-xs text-white/60 mb-2">背景スタイル</label>
+                        <select id="setting-bg-style" class="w-full bg-white/10 border border-white/15 rounded-lg px-3 py-2 text-sm text-white focus:outline-none" onchange="updateSetting('bgStyle', this.value)">
+                            <option value="solid" class="bg-gray-900">単色 (Solid)</option>
+                            <option value="gradient" class="bg-gray-900">グラデーション (Vignette)</option>
+                            <option value="noise" class="bg-gray-900">ノイズテクスチャ</option>
+                            <option value="noise-gradient" class="bg-gray-900">グラデーション ＋ ノイズ</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="tab-anim" class="tab-content space-y-5">
+                    <div class="flex flex-col gap-2">
+                        <div class="flex justify-between text-xs text-white/60"><span>回転スピード (Duration)</span><span id="val-anim-dur">450ms</span></div>
+                        <input type="range" id="setting-anim-dur" min="100" max="1500" step="50" value="450" class="w-full accent-blue-400" oninput="updateSetting('animDuration', this.value); document.getElementById('val-anim-dur').textContent = this.value + 'ms'">
+                        <div class="flex justify-between text-[10px] text-white/40 mt-1">
+                            <span>速い (100ms)</span><span>遅い (1500ms)</span>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-2 pt-4 border-t border-white/10">
+                        <label class="text-xs text-white/60">動きのスタイル (Easing)</label>
+                        <select id="setting-anim-ease" class="w-full bg-white/10 border border-white/15 rounded-lg px-3 py-2 text-sm text-white focus:outline-none" onchange="updateSetting('animEasing', this.value)">
+                            <option value="cubic-bezier(0.16, 1, 0.3, 1)" class="bg-gray-900">スムーズ (Apple風)</option>
+                            <option value="cubic-bezier(0.68, -0.55, 0.265, 1.55)" class="bg-gray-900">バウンス (跳ねる)</option>
+                            <option value="cubic-bezier(0.175, 0.885, 0.32, 1.275)" class="bg-gray-900">スプリング (バネ)</option>
+                            <option value="linear" class="bg-gray-900">リニア (一定速度)</option>
+                        </select>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="p-5 border-t border-white/10 flex items-center justify-between mt-auto">
+                <button onclick="resetSettings()" class="text-xs text-white/50 hover:text-white/90 underline transition-colors font-['Noto_Sans_JP']">
+                    初期設定に戻す
+                </button>
+                <button onclick="closeSettings()" class="px-6 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-all active:scale-95 font-['Noto_Sans_JP'] shadow-lg">
+                    完了
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // Default Configuration State
+        const defaultSettings = {
+            // Basic
+            use24Hour: true,
+            showSeconds: true,
+            showDate: true,
+            blinkColons: true,
+            // Design
+            fontFamily: "'Outfit', 'Noto Sans JP', sans-serif",
+            fontWeight: "300",
+            digitScale: 1.0,
+            glowAmount: 0,
+            peekOpacity: 0.35,
+            peekOffset: 85,
+            // Color & BG
+            textColor: "#ffffff",
+            bgColor: "#000000",
+            colonColor: "rgba(255, 255, 255, 0.35)",
+            bgStyle: "solid", // solid, gradient, noise, noise-gradient
+            // Animation
+            animDuration: 450,
+            animEasing: "cubic-bezier(0.16, 1, 0.3, 1)"
+        };
+
+        let settings = { ...defaultSettings };
+
+        // Color Presets mapping
+        const presets = {
+            oled: { bg: "#000000", text: "#ffffff", colon: "rgba(255,255,255,0.35)" },
+            studio: { bg: "#f1f5f9", text: "#0f172a", colon: "rgba(15,23,42,0.3)" },
+            cyber: { bg: "#0d0221", text: "#00f0ff", colon: "#ff007f" },
+            mint: { bg: "#0f172a", text: "#a7f3d0", colon: "rgba(167,243,208,0.4)" },
+            sepia: { bg: "#2c241b", text: "#d4b595", colon: "rgba(212,181,149,0.4)" },
+            sakura: { bg: "#fff0f5", text: "#db7093", colon: "rgba(219,112,147,0.4)" }
+        };
+
+        function loadSettings() {
+            const saved = localStorage.getItem('ja_modern_clock_settings');
+            if (saved) {
+                try {
+                    settings = { ...defaultSettings, ...JSON.parse(saved) };
+                } catch (e) {
+                    console.error("設定の読み込みに失敗しました", e);
+                }
+            }
+            syncUIToSettings();
+            applySettingsToDOM();
+        }
+
+        function saveSettings() {
+            localStorage.setItem('ja_modern_clock_settings', JSON.stringify(settings));
+        }
+
+        function updateSetting(key, value) {
+            settings[key] = value;
+            applySettingsToDOM();
+            saveSettings();
+            if (['use24Hour', 'showDate', 'showSeconds'].includes(key)) {
+                forceTickUpdate();
+            }
+        }
+
+        function resetSettings() {
+            settings = { ...defaultSettings };
+            syncUIToSettings();
+            applySettingsToDOM();
+            saveSettings();
+            forceTickUpdate();
+        }
+
+        function applyPreset(name) {
+            if (presets[name]) {
+                settings.bgColor = presets[name].bg;
+                settings.textColor = presets[name].text;
+                settings.colonColor = presets[name].colon;
+                syncUIToSettings();
+                applySettingsToDOM();
+                saveSettings();
+            }
+        }
+
+        // Sync JS State back to Input Elements
+        function syncUIToSettings() {
+            // Basic
+            document.getElementById('setting-24h').checked = settings.use24Hour;
+            document.getElementById('setting-seconds').checked = settings.showSeconds;
+            document.getElementById('setting-date').checked = settings.showDate;
+            document.getElementById('setting-blink').checked = settings.blinkColons;
+            
+            // Design
+            document.getElementById('setting-font').value = settings.fontFamily;
+            document.getElementById('setting-weight').value = settings.fontWeight;
+            
+            document.getElementById('setting-scale').value = Math.round(settings.digitScale * 100);
+            document.getElementById('val-scale').textContent = Math.round(settings.digitScale * 100) + '%';
+            
+            document.getElementById('setting-glow').value = settings.glowAmount;
+            document.getElementById('val-glow').textContent = settings.glowAmount + 'px';
+            
+            document.getElementById('setting-peek-op').value = Math.round(settings.peekOpacity * 100);
+            document.getElementById('val-peek-op').textContent = Math.round(settings.peekOpacity * 100) + '%';
+
+            document.getElementById('setting-peek-off').value = settings.peekOffset;
+            document.getElementById('val-peek-off').textContent = settings.peekOffset + '%';
+            
+            // Color
+            document.getElementById('setting-col-text').value = rgbToHex(settings.textColor);
+            document.getElementById('setting-col-bg').value = rgbToHex(settings.bgColor);
+            document.getElementById('setting-col-colon').value = rgbToHex(settings.colonColor);
+            document.getElementById('setting-bg-style').value = settings.bgStyle;
+
+            // Animation
+            document.getElementById('setting-anim-dur').value = settings.animDuration;
+            document.getElementById('val-anim-dur').textContent = settings.animDuration + 'ms';
+            document.getElementById('setting-anim-ease').value = settings.animEasing;
+        }
+
+        function applySettingsToDOM() {
+            const root = document.documentElement;
+
+            // CSS Variables
+            root.style.setProperty('--color-bg', settings.bgColor);
+            root.style.setProperty('--color-text', settings.textColor);
+            root.style.setProperty('--color-colon', settings.colonColor);
+            
+            root.style.setProperty('--clock-font', settings.fontFamily);
+            root.style.setProperty('--clock-weight', settings.fontWeight);
+            root.style.setProperty('--clock-scale', settings.digitScale);
+            root.style.setProperty('--clock-glow', `${settings.glowAmount}px`);
+            root.style.setProperty('--peek-opacity', settings.peekOpacity);
+            root.style.setProperty('--peek-offset', `${settings.peekOffset}%`);
+            
+            root.style.setProperty('--anim-duration', `${settings.animDuration}ms`);
+            root.style.setProperty('--anim-easing', settings.animEasing);
+
+            // Display Toggles
+            document.body.setAttribute('data-bg-style', settings.bgStyle);
+            
+            document.getElementById('seconds-group').style.display = settings.showSeconds ? 'inline-flex' : 'none';
+            document.getElementById('date-display').style.display = settings.showDate ? 'block' : 'none';
+
+            // Colon Blinking
+            document.querySelectorAll('.colon-style').forEach(el => {
+                if(settings.blinkColons) el.classList.add('colon-pulse');
+                else el.classList.remove('colon-pulse');
+            });
+        }
+
+        // Helper string color to hex
+        function rgbToHex(color) {
+            if (!color) return '#000000';
+            if (color.startsWith('#') && color.length === 7) return color;
+            const ctx = document.createElement('canvas').getContext('2d');
+            ctx.fillStyle = color;
+            return ctx.fillStyle;
+        }
+
+        function switchTab(tabId, btn) {
+            // Reset all tabs
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active', 'border-b', 'border-white', 'text-white'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            // Set active
+            btn.classList.add('active', 'border-b', 'border-white', 'text-white');
+            document.getElementById(tabId).classList.add('active');
+        }
+
+        function openSettings() {
+            const modal = document.getElementById('settings-modal');
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+            modal.querySelector('.glass-panel').classList.remove('translate-x-full');
+            document.body.classList.remove('user-idle');
+        }
+
+        function closeSettings() {
+            const modal = document.getElementById('settings-modal');
+            modal.classList.add('opacity-0', 'pointer-events-none');
+            modal.querySelector('.glass-panel').classList.add('translate-x-full');
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else if (document.exitFullscreen) {
+                document.exitFullscreen();
+            }
+        }
+
+        // Variables to track current DOM state to avoid unnecessary DOM updates
+        const state = { h1: '', h2: '', m1: '', m2: '', s1: '', s2: '', date: '' };
+
+        function forceTickUpdate() {
+            // Invalidate state to force redraw
+            state.h1 = ''; state.date = '';
+            tick();
+        }
+
+        function updateDigitColumn(id, newDigit, peekDigit) {
+            if (state[id] === newDigit) return; // No change needed
+
+            const wrapper = document.getElementById(id);
+            if (!wrapper || wrapper.classList.contains('rolling')) return;
+
+            const currSpan = wrapper.querySelector('.curr-val');
+            const nextSpan = wrapper.querySelector('.next-val');
+
+            // Set the target for animation
+            nextSpan.textContent = newDigit;
+
+            // Trigger CSS transition
+            wrapper.classList.add('rolling');
+            state[id] = newDigit;
+
+            // Wait for transition to finish based on setting duration
+            setTimeout(() => {
+                // Disable transitions temporarily to snap back
+                wrapper.classList.add('no-transition');
+                
+                currSpan.textContent = newDigit;
+                nextSpan.textContent = peekDigit; // The digit that will peek after reset
+                
+                wrapper.classList.remove('rolling');
+                
+                // Force reflow
+                void wrapper.offsetHeight; 
+                
+                // Re-enable transitions
+                wrapper.classList.remove('no-transition');
+            }, settings.animDuration);
+        }
+
+        function tick() {
+            const now = new Date();
+            
+            // Date formatting (Japanese)
+            if (settings.showDate) {
+                const options = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' };
+                const dateStr = new Intl.DateTimeFormat('ja-JP', options).format(now);
+                if (state.date !== dateStr) {
+                    document.getElementById('date-display').textContent = dateStr;
+                    state.date = dateStr;
+                }
+            }
+
+            // Time calculations
+            let h = now.getHours();
+            const m = now.getMinutes();
+            const s = now.getSeconds();
+
+            const ampmBadge = document.getElementById('ampm-badge');
+            if (!settings.use24Hour) {
+                ampmBadge.textContent = h >= 12 ? 'PM' : 'AM';
+                ampmBadge.classList.remove('hidden');
+                h = h % 12 || 12;
+            } else {
+                ampmBadge.classList.add('hidden');
+            }
+
+            const hStr = String(h).padStart(2, '0');
+            const mStr = String(m).padStart(2, '0');
+            const sStr = String(s).padStart(2, '0');
+
+            // Peek calculation (what comes next)
+            const nextS = (s + 1) % 60;
+            const nextSStr = String(nextS).padStart(2, '0');
+            
+            const nextM = (m + 1) % 60;
+            const nextMStr = String(nextM).padStart(2, '0');
+            
+            let nextH = settings.use24Hour ? (now.getHours() + 1) % 24 : ((h % 12) + 1);
+            const nextHStr = String(nextH).padStart(2, '0');
+
+            // Execute Updates
+            updateDigitColumn('h1', hStr[0], nextHStr[0]);
+            updateDigitColumn('h2', hStr[1], nextHStr[1]);
+            
+            updateDigitColumn('m1', mStr[0], nextMStr[0]);
+            updateDigitColumn('m2', mStr[1], nextMStr[1]);
+
+            if (settings.showSeconds) {
+                updateDigitColumn('s1', sStr[0], nextSStr[0]);
+                updateDigitColumn('s2', sStr[1], nextSStr[1]);
+            }
+        }
+
+        let idleTimer;
+        function resetIdleTimer() {
+            document.body.classList.remove('user-idle');
+            clearTimeout(idleTimer);
+            const modal = document.getElementById('settings-modal');
+            if (!modal.classList.contains('pointer-events-none')) return; // Don't hide if settings open
+            idleTimer = setTimeout(() => document.body.classList.add('user-idle'), 3000);
+        }
+
+        window.addEventListener('mousemove', resetIdleTimer);
+        window.addEventListener('touchstart', resetIdleTimer);
+        
+        // Double click body to fullscreen (ignore clicks on modal)
+        document.body.addEventListener('dblclick', (e) => {
+            if (!e.target.closest('#settings-modal') && !e.target.closest('header')) {
+                toggleFullscreen();
+            }
+        });
+
+        window.onload = function () {
+            loadSettings();
+            forceTickUpdate(); // Initial render instantly without animation wait
+            setInterval(tick, 200); // Check time frequently
+            resetIdleTimer();
+        };
+
+    </script>
+</body>
+</html>
